@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
-from torch.distributions.uniform import Uniform
-
-from graphs.weights_initializer import weights_init
 
 class Im2LatexModel(nn.Module):
     def __init__(self, cfg, out_size):
+        """
+        out_size : VOCAB_SIZE
+        """
         super(Im2LatexModel, self).__init__()
         self.cfg = cfg
         enc_out_dim = cfg.enc_out_dim
@@ -45,18 +45,25 @@ class Im2LatexModel(nn.Module):
         self.init_wo = nn.Linear(enc_out_dim, dec_rnn_h)
 
         #Attention mechanism
-        self.beta = nn.Parameter(torch.Tensor(enc_out_dim))
-        nn.init.uniform_(sefl.beta, -0.01, 0.01)
         self.W_1 = nn.Linear(enc_out_dim, enc_out_dim, bias=False)
         self.W_2 = nn.Linear(dec_rnn_h, enc_out_dim, bias=False)
         self.W_3 = nn.Linear(dec_rnn_h + enc_out_dim, dec_rnn_h, bias=False)
         self.W_out = nn.Linear(dec_rnn_h, out_size, bias=False)
 
-        self.uniform = Uniform(0, 1)
+    
 
     def forward(self, img, formulas, epsilon=1.):
-        x = self.conv(x)
-        x = self.relu(x)
+        """
+        imgs: [B, C, H, W]
+        returns: logit of [B, MAX_LEN, VOCAB_SIZE]
+        """
+
+        # encoding
+        encoded_imgs = self.encode(imgs)  # [B, H*W, 512]
 
         out = x.view(x.size(0), -1)
         return out
+
+    def encode(self, imgs):
+        encoded_imgs = self.cnn_encoder(imgs)  # [B, 512, H', W']
+        encoded-imgs.conti

@@ -1,0 +1,31 @@
+{
+  "exp_name": "im2latex-draft",
+  "agent": "im2latex",
+  "mode": "train",
+
+  "cuda": true,
+  "data_parallel" : true,
+  "seed": 1337,
+
+  "train_test_ratio": 0.8,
+  "lr":1e-4,
+  "img_size": 299,
+  "input_channels": 3,
+  "bs": 256,
+
+  "epochs": 10,
+  "learning_rate": 0.1,
+  "adam_beta_1" : 0.5,
+  "adam_beta_2" : 0.9,
+  "validate_freq": 2,
+  "data_shuffle": true,
+
+  "enc_out_dim" : 512,
+  "emb_dim" : 512,
+  "dec_rnn_h" : 1000,
+
+  "log_interval" : 100,
+  "num_w": 8,
+
+  "checkpoint_filename" : ""
+}
