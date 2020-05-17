@@ -1,32 +1,56 @@
-import numpy as np
+import torch
+import math
 from torchvision import transforms
 from PIL import Image
 from datetime import datetime
 
-def fetch_cosine_values(seq_len, frequency=0.01, noise=0.1):
-    np.random.seed(101)
-    x = np.arange(0.0, seq_len, 1.0)
-    return np.cos(2 * np.pi * frequency * x) + np.random.uniform(low=noise, high=noise, size=seq_len)
+def add_positional_features(tensor: torch.Tensor,
+                            min_timescale: float = 1.0,
+                            max_timescale: float = 1.0e4):
+    """
+    Implements the frequency-based positional encoding described
+    in `Attention is all you Need
+    Parameters
+    ----------
+    tensor : ``torch.Tensor``
+        a Tensor with shape (batch_size, timesteps, hidden_dim).
+    min_timescale : ``float``, optional (default = 1.0)
+        The largest timescale to use.
+    Returns
+    -------
+    The input tensor augmented with the sinusoidal frequencies.
+    """
+    _, timesteps, hidden_dim = tensor.size()
 
-def format_dataset(values, temporal_features):
-    feat_splits = [values[i:i+temporal_features] for i in range(len(values) - temporal_features)]
-    feats = np.array(feat_splits)
-    labels = np.array(values[temporal_features:])
-    return feats, labels
+    timestep_range = get_range_vector(timesteps, tensor.device).data.float()
+    # We're generating both cos and sin frequencies,
+    # so half for each.
+    num_timescales = hidden_dim // 2
+    timescale_range = get_range_vector(
+        num_timescales, tensor.device).data.float()
 
-def matrix_to_array(m):
-    return np.asarray(m).reshape(-1)
+    log_timescale_increments = math.log(
+        float(max_timescale) / float(min_timescale)) / float(num_timescales - 1)
+    inverse_timescales = min_timescale * \
+        torch.exp(timescale_range * -log_timescale_increments)
 
-def read_classes(fn):
-    with open(fn, 'r', encoding='utf8') as f:
-        classes = []
-        line = f.readline().strip()
-        while line:
-            classes.append(line)
-            line = f.readline().strip()
-    assert len(classes) != 0
-    print("number of detected classes : {}".format(len(classes)))
-    return classes
+    # Broadcasted multiplication - shape (timesteps, num_timescales)
+    scaled_time = timestep_range.unsqueeze(1) * inverse_timescales.unsqueeze(0)
+    # shape (timesteps, 2 * num_timescales)
+    sinusoids = torch.randn(
+        scaled_time.size(0), 2*scaled_time.size(1), device=tensor.device)
+    sinusoids[:, ::2] = torch.sin(scaled_time)
+    sinusoids[:, 1::2] = torch.cos(scaled_time)
+    if hidden_dim % 2 != 0:
+        # if the number of dimensions is odd, the cos and sin
+        # timescales had size (hidden_dim - 1) / 2, so we need
+        # to add a row of zeros to make up the difference.
+        sinusoids = torch.cat(
+            [sinusoids, sinusoids.new_zeros(timesteps, 1)], 1)
+    return tensor + sinusoids.unsqueeze(0)
+
+def get_range_vector(size: int, device) -> torch.Tensor:
+    return torch.arange(0, size, dtype=torch.long, device=device)
 
 def read_image(fn, size:tuple):
     # this function reads an image
@@ -35,5 +59,5 @@ def read_image(fn, size:tuple):
                             transforms.Resize(size, Image.BICUBIC),
                             transforms.ToTensor()
                             ])
-    return transformations(img).unsqueeze(0)                     
-    
+    return transformations(img).unsqueeze(0)
+
