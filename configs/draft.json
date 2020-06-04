@@ -1,17 +1,22 @@
 {
   "exp_name": "im2latex-draft",
-  "agent": "im2latex",
+  "agent": "Im2latex",
   "mode": "train",
+  "debug": true,
 
-  "cuda": true,
+  "cuda": false,
   "data_parallel" : true,
   "seed": 1337,
 
   "train_test_ratio": 0.8,
   "lr":1e-4,
-  "img_size": 299,
-  "input_channels": 3,
-  "bs": 256,
+  "input_channels": 1,
+  "bs": 4,
+
+  "train_img_path" : "data/dataset5/processed/train_imgs",
+  "valid_img_path" : "data/dataset5/processed/valid_imgs",
+  "train_formula_path" : "data/dataset5/processed/train.txt",
+  "valid_formula_path" : "data/dataset5/processed/valid.txt",
 
   "epochs": 10,
   "learning_rate": 0.1,
@@ -21,8 +26,9 @@
   "data_shuffle": true,
 
   "enc_out_dim" : 512,
-  "emb_dim" : 512,
-  "dec_rnn_h" : 1000,
+  "emb_dim" : 80,
+  "dec_rnn_h" : 512,
+  "max_len" : 150,
 
   "log_interval" : 100,
   "num_w": 8,
