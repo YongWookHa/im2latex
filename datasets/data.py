@@ -5,7 +5,7 @@ import torch
 import numpy as np
 import os
 
-from tqdm import tqdm 
+from tqdm import tqdm
 from PIL import Image
 
 from torchvision import transforms
@@ -16,11 +16,11 @@ class Im2LatexDataset(Dataset):
     def __init__(self, config, mode="train"):
         super().__init__()
         self.config = config
-        
-        if config.mode == "train":
+
+        if mode == "train":
             formula_path = config.train_formula_path
             image_path = config.train_img_path
-        elif config.mode == "valid":
+        elif mode == "valid":
             formula_path = config.valid_formula_path
             image_path = config.valid_img_path
         else:
@@ -37,6 +37,7 @@ class Im2LatexDataset(Dataset):
         self.id2token = {0:'\\bos', 1:'\\eos'}
         self.token2id = {'\\bos':0, '\\eos':1}
         cnt = 2
+        print('Reading from {}'.format(formula_path))
         tqdm_bar = tqdm(enumerate(open(formula_path, 'r')), desc="DataLoading")
         for i, form in tqdm_bar:
             if config.debug and i > 500: break
@@ -45,13 +46,13 @@ class Im2LatexDataset(Dataset):
             self.dataset.append((transform(img), form))
 
             # build vocab
-            if config.mode == "train":
+            if mode == "train":
                 for token in form:
                     if token not in self.token2id:
                         self.token2id[token] = cnt
                         self.id2token[cnt] = token
                         cnt += 1
-        if config.mode == "train":
+        if mode == "train":
             print('{} Words Vocab Built'.format(len(self.token2id)))
             torch.save({
                 'id2token' : self.id2token,
@@ -59,7 +60,7 @@ class Im2LatexDataset(Dataset):
             }, os.path.join('experiments', config.exp_name, 'vocab.pkl'))
         else:
             try:
-                vocab = torch.load(os.path.join('experiments', 
+                vocab = torch.load(os.path.join('experiments',
                                                 config.exp_name, 'vocab.pkl'))
                 self.id2token = vocab['id2token']
                 self.token2id = vocab['token2id']
@@ -70,7 +71,7 @@ class Im2LatexDataset(Dataset):
 
     def __getitem__(self, index):
         return self.dataset[index]
-    
+
     def __len__(self):
         return len(self.dataset)
 
@@ -90,13 +91,13 @@ class custom_collate(object):
 
         imgs, formulas = zip(*batch)
         # targets for training , begin with START_TOKEN
-        tgt4training = self.formulas2tensor(self.add_start_token(formulas), 
+        tgt4training = self.formulas2tensor(self.add_start_token(formulas),
                                             self.token2id)
-    
+
         # targets for calculating loss , end with END_TOKEN
-        tgt4cal_loss = self.formulas2tensor(self.add_end_token(formulas), 
+        tgt4cal_loss = self.formulas2tensor(self.add_end_token(formulas),
                                             self.token2id)
-        
+
         imgs = torch.stack(imgs, dim=0)
         return imgs, tgt4training, tgt4cal_loss
 
@@ -108,8 +109,14 @@ class custom_collate(object):
         BOS, EOS = 0, 1
         tensors = torch.ones(batch_size, self.max_len, dtype=torch.long) * EOS
         for i, formula in enumerate(formulas):
-            for j, token in enumerate(formula):
-                tensors[i][j] = token2id[token]
+            for j, token in enumerate(formula[: self.max_len]):
+                try:
+                    tensors[i][j] = token2id[token]
+                except IndexError:
+                    print('size of tensors:', tensors.size())
+                    print('i, j:', i, j)
+                    print('token:', token)
+                    raise
         return tensors
 
 
