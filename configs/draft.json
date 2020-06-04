@@ -4,10 +4,11 @@
   "mode": "train",
   "debug": true,
 
-  "cuda": false,
+  "cuda": true,
   "data_parallel" : true,
   "seed": 1337,
 
+  "log_freq" : 100,
   "train_test_ratio": 0.8,
   "lr":1e-4,
   "input_channels": 1,
