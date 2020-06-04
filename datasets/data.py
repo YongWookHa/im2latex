@@ -27,8 +27,7 @@ class Im2LatexDataset(Dataset):
             raise NotImplementedError
 
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize((0.5, 0.5, 0.5), 
-                                                            (0.5, 0.5, 0.5))])
+                                        transforms.Normalize([0.5], [0.5])])
 
         # tokens
         self.NullTokenID, self.StartTokenID = 0, 1
@@ -38,8 +37,9 @@ class Im2LatexDataset(Dataset):
         self.id2token = {0:'\\bos', 1:'\\eos'}
         self.token2id = {'\\bos':0, '\\eos':1}
         cnt = 2
-        tqdm_bar = tqdm(enumerate(open(formula_path, 'r'), desc="DataLoading"))
+        tqdm_bar = tqdm(enumerate(open(formula_path, 'r')), desc="DataLoading")
         for i, form in tqdm_bar:
+            if config.debug and i > 500: break
             img = Image.open("{}/{}.png".format(image_path, i))
             form = form.split()[:config.max_len]
             self.dataset.append((transform(img), form))
@@ -77,37 +77,44 @@ class Im2LatexDataset(Dataset):
     def finalize(self):
         pass
 
-def collate_fn(token2id, batch):
-    # filter the pictures that have different weight or height
-    size = batch[0][0].size()
-    batch = [img_formula for img_formula in batch
-             if img_formula[0].size() == size]
+class custom_collate(object):
+    def __init__(self, token2id, max_len):
+        self.token2id = token2id
+        self.max_len = max_len
 
-    imgs, formulas = zip(*batch)
-    formulas = [formula.split() for formula in formulas]
-    # targets for training , begin with START_TOKEN
-    tgt4training = formulas2tensor(add_start_token(formulas), token2id)
-    # targets for calculating loss , end with END_TOKEN
-    tgt4cal_loss = formulas2tensor(add_end_token(formulas), token2id)
-    imgs = torch.stack(imgs, dim=0)
-    return imgs, tgt4training, tgt4cal_loss
+    def __call__(self, batch):
+        # filter the pictures that have different weight or height
+        size = batch[0][0].size()
+        batch = [img_formula for img_formula in batch
+                if img_formula[0].size() == size]
 
-
-def formulas2tensor(formulas, token2id):
-    """convert formula to tensor"""
-
-    batch_size = len(formulas)
-    max_len = len(formulas[0])
-    BOS, EOS = 0, 1
-    tensors = torch.ones(batch_size, max_len, dtype=torch.long) * EOS
-    for i, formula in enumerate(formulas):
-        for j, token in enumerate(formula):
-            tensors[i][j] = token2id[token]
-    return tensors
+        imgs, formulas = zip(*batch)
+        # targets for training , begin with START_TOKEN
+        tgt4training = self.formulas2tensor(self.add_start_token(formulas), 
+                                            self.token2id)
+    
+        # targets for calculating loss , end with END_TOKEN
+        tgt4cal_loss = self.formulas2tensor(self.add_end_token(formulas), 
+                                            self.token2id)
+        
+        imgs = torch.stack(imgs, dim=0)
+        return imgs, tgt4training, tgt4cal_loss
 
 
-def add_start_token(formulas):
-    return [['\\bos']+formula for formula in formulas]
+    def formulas2tensor(self, formulas, token2id):
+        """convert formula to tensor"""
 
-def add_end_token(formulas):
-    return [formula+['\\eos'] for formula in formulas]
+        batch_size = len(formulas)
+        BOS, EOS = 0, 1
+        tensors = torch.ones(batch_size, self.max_len, dtype=torch.long) * EOS
+        for i, formula in enumerate(formulas):
+            for j, token in enumerate(formula):
+                tensors[i][j] = token2id[token]
+        return tensors
+
+
+    def add_start_token(self, formulas):
+        return [['\\bos']+formula for formula in formulas]
+
+    def add_end_token(self, formulas):
+        return [formula+['\\eos'] for formula in formulas]
