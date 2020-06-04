@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# from utils.utils import add_positional_features
+from utils.utils import add_positional_features
 
 class Im2LatexModel(nn.Module):
     def __init__(self, cfg, out_size):
@@ -56,7 +56,7 @@ class Im2LatexModel(nn.Module):
 
         self.attn_W1 = nn.Linear(dec_rnn_h, 512, bias=False)
         self.attn_W2 = nn.Linear(512, 512, bias=False)
-        
+
         self.dec_W3 = nn.Linear(dec_rnn_h*2, dec_rnn_h, bias=False)
         self.dec_W4 = nn.Linear(dec_rnn_h, out_size, bias=False)
 
@@ -77,7 +77,7 @@ class Im2LatexModel(nn.Module):
 
         # encoding
         memoryBank = self.encode(imgs)  # [B, 512, H', W']
-        
+
         logits = []
         bos = 0
         logit = torch.zeros((imgs.size(0), max_seq_len))
@@ -90,11 +90,12 @@ class Im2LatexModel(nn.Module):
                 tgt = torch.argmax(logit, dim=2).squeeze(1)
             prev_w = self.embedding(tgt).unsqueeze(1)
             C_t = self.get_attn(prev_h, memoryBank).unsqueeze(1)  # [B, 1, D]
+            self.LSTM.flatten_parameters()
             h_t, dec_states =  self.LSTM(torch.cat([prev_w, prev_h], dim=2), dec_states)
             O_t = torch.tanh(self.dec_W3(torch.cat([h_t, C_t], dim=2)))  # O_t = [B, 1, D]
             logit = F.log_softmax(self.dec_W4(O_t), dim=2)
             logits.append(logit)
-            
+
             prev_h = h_t
 
         return torch.stack(logits).permute(1,0,2,3).squeeze(2)
@@ -113,7 +114,7 @@ class Im2LatexModel(nn.Module):
         memoryBank : [B, L, D]
         '''
         # Attention
-        a = torch.tanh(torch.add(self.attn_W1(prev_h), 
+        a = torch.tanh(torch.add(self.attn_W1(prev_h),
                                  self.attn_W2(memoryBank)))
         attn_weight = F.softmax(a, dim=2)  # alpha: [B, L]
 
@@ -131,68 +132,3 @@ class Im2LatexModel(nn.Module):
         o = torch.tanh(self.init_o(mean_enc_out)).unsqueeze(1)
 
         return o, (torch.stack([h1, h2]), torch.stack([c1, c2]))
-
-
-def add_positional_features(tensor: torch.Tensor,
-                            min_timescale: float = 1.0,
-                            max_timescale: float = 1.0e4):
-    """
-    Implements the frequency-based positional encoding described
-    in `Attention is all you Need
-    Parameters
-    ----------
-    tensor : ``torch.Tensor``
-        a Tensor with shape (batch_size, timesteps, hidden_dim).
-    min_timescale : ``float``, optional (default = 1.0)
-        The largest timescale to use.
-    Returns
-    -------
-    The input tensor augmented with the sinusoidal frequencies.
-    """
-    _, timesteps, hidden_dim = tensor.size()
-
-    timestep_range = get_range_vector(timesteps, tensor.device).data.float()
-    # We're generating both cos and sin frequencies,
-    # so half for each.
-    num_timescales = hidden_dim // 2
-    timescale_range = get_range_vector(
-        num_timescales, tensor.device).data.float()
-
-    log_timescale_increments = math.log(
-        float(max_timescale) / float(min_timescale)) / float(num_timescales - 1)
-    inverse_timescales = min_timescale * \
-        torch.exp(timescale_range * -log_timescale_increments)
-
-    # Broadcasted multiplication - shape (timesteps, num_timescales)
-    scaled_time = timestep_range.unsqueeze(1) * inverse_timescales.unsqueeze(0)
-    # shape (timesteps, 2 * num_timescales)
-    sinusoids = torch.randn(
-        scaled_time.size(0), 2*scaled_time.size(1), device=tensor.device)
-    sinusoids[:, ::2] = torch.sin(scaled_time)
-    sinusoids[:, 1::2] = torch.cos(scaled_time)
-    if hidden_dim % 2 != 0:
-        # if the number of dimensions is odd, the cos and sin
-        # timescales had size (hidden_dim - 1) / 2, so we need
-        # to add a row of zeros to make up the difference.
-        sinusoids = torch.cat(
-            [sinusoids, sinusoids.new_zeros(timesteps, 1)], 1)
-    return tensor + sinusoids.unsqueeze(0)
-
-def get_range_vector(size: int, device) -> torch.Tensor:
-    return torch.arange(0, size, dtype=torch.long, device=device)
-
-
-if __name__ == "__main__":
-    from easydict import EasyDict
-    import math
-    cfg = EasyDict({'emb_dim':80, 'dec_rnn_h':512})
-    model = Im2LatexModel(cfg, 336)
-    """
-    Forward parameters
-    imgs: [B, C, H, W]
-    formulas: [B, max_seq_len]
-    returns: logit of [B, MAX_LEN, VOCAB_SIZE]
-    """
-    B, C, H, W = 4, 1, 1088, 128
-    max_seq_len = 150
-    print(model(torch.randn(B,C,H,W), torch.randint(0, 336, (B, max_seq_len))))
