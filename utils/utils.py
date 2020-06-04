@@ -4,6 +4,28 @@ from torchvision import transforms
 from PIL import Image
 from datetime import datetime
 
+def cal_loss(logits, targets):
+    """args:
+        logits: probability distribution return by model
+                [B, MAX_LEN, voc_size]
+        targets: target formulas
+                [B, MAX_LEN]
+    """
+    EOS = 1
+    padding = torch.ones_like(targets) * EOS
+    mask = (targets != padding)
+
+    targets = targets.masked_select(mask)
+    logits = logits.masked_select(
+        mask.unsqueeze(2).expand(-1, -1, logits.size(2))
+    ).contiguous().view(-1, logits.size(2))
+    logits = torch.log(logits)
+
+    assert logits.size(0) == targets.size(0)
+
+    loss = torch.nn.functional.nll_loss(logits, targets)
+    return loss
+
 def add_positional_features(tensor: torch.Tensor,
                             min_timescale: float = 1.0,
                             max_timescale: float = 1.0e4):
