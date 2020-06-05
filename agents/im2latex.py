@@ -12,7 +12,7 @@ from torch.nn.parallel import DataParallel
 
 from tensorboardX import SummaryWriter
 
-from utils.misc import print_cuda_statistics, get_device
+from utils.misc import get_device
 from agents.base import BaseAgent
 
 from datasets.data import Im2LatexDataset, custom_collate
@@ -26,7 +26,6 @@ class Im2latex(BaseAgent):
 
     def __init__(self, cfg):
         super().__init__(cfg)
-        # print_cuda_statistics()
         self.device = get_device()
         self.cfg = cfg
 
@@ -40,10 +39,10 @@ class Im2latex(BaseAgent):
 
         self.train_loader = DataLoader(train_dataset, batch_size=cfg.bs,
                             shuffle=cfg.data_shuffle, num_workers=cfg.num_w,
-                            collate_fn=collate)
+                            collate_fn=collate, drop_last=True)
         self.valid_loader = DataLoader(valid_dataset, batch_size=cfg.bs,
                             shuffle=cfg.data_shuffle, num_workers=cfg.num_w,
-                            collate_fn=collate)
+                            collate_fn=collate, drop_last=True)
 
         # define models
         self.model = Im2LatexModel(cfg, len(self.id2token))  # fill the parameters
@@ -118,13 +117,14 @@ class Im2latex(BaseAgent):
 
         # save the state
         checkpoint_dir = os.path.join(self.exp_dir, 'checkpoints')
-        file_name = "e{}-i{}.pt".format(self.current_epoch,
-                                        self.current_iteration)
-        torch.save(state, os.path.join(checkpoint_dir, file_name))
-
         if is_best:
-            shutil.copyfile(os.path.join(checkpoint_dir, file_name),
-                            os.path.join(checkpoint_dir, 'best.pt'))
+            torch.save(state, os.path.join(checkpoint_dir, 'best.pt'))
+            self.best_info = 'best: e{}_i{}'.format(self.current_epoch,
+                                                    self.current_iteration)
+        else:
+            file_name = "e{}-i{}.pt".format(self.current_epoch,
+                                            self.current_iteration)
+            torch.save(state, os.path.join(checkpoint_dir, file_name))
 
     def run(self):
         """
@@ -148,6 +148,7 @@ class Im2latex(BaseAgent):
         for e in range(self.current_epoch, self.cfg.epochs+1):
             self.train_one_epoch()
             self.validate()
+            self.save_checkpoint()
             self.current_epoch += 1
 
     def train_one_epoch(self):
@@ -161,34 +162,36 @@ class Im2latex(BaseAgent):
         self.model.train()
         avg_loss = 0
         for i, (imgs, tgt4training, tgt4cal_loss) in tqdm_bar:
-            imgs = imgs.to(self.device).float()
-            tgt4training = tgt4training.to(self.device).long()
-            tgt4cal_loss = tgt4cal_loss.to(self.device).long()
+            imgs = imgs.float().to(self.device)
+            tgt4training = tgt4training.long().to(self.device)
+            tgt4cal_loss = tgt4cal_loss.long().to(self.device)
 
-            logits = self.model(imgs, tgt4training, is_train=True) # [B, MAXLEN, VOCABSIZE]
+            # [B, MAXLEN, VOCABSIZE]
+            logits = self.model(imgs, tgt4training, is_train=True)
             loss = self.criterion(logits, tgt4cal_loss)
-
             # L2 regularization
-            reg_loss = None
+            reg_loss = 0
             for param in self.model.parameters():
-                if reg_loss is None:
-                    reg_loss = 0.5 * torch.sum(param**2)
-                else:
-                    reg_loss = reg_loss + 0.5 * param.norm(2)**2
-            loss += reg_loss * 0.9
+                reg_loss += torch.norm(param)
+            loss += reg_loss * self.cfg.L2_lambda
             avg_loss += loss.item()
+
             loss.backward()
             self.optimizer.step()
+            self.current_iteration += 1
 
-            # save if best
-            if self.current_epoch % self.cfg.log_freq == 0:
+            # logging
+            if self.current_iteration % self.cfg.log_freq == 0:
                 avg_loss = avg_loss / self.cfg.log_freq
-                tqdm_bar.set_description("loss: {}".format(avg_loss))
-                if  avg_loss < self.best_loss:
-                    self.save_checkpoint()
+                self.summary_writer.add_scalar('loss', avg_loss,
+                                            global_step=self.current_iteration)
+                tqdm_bar.set_description(
+                    "reg_loss: {} | avg_loss: {}".format(
+                                        reg_loss*self.cfg.L2_lambda, avg_loss))
+                # save if best
+                if  self.current_epoch > 10 and avg_loss < self.best_loss:
+                    self.save_checkpoint(is_best=True)
                     self.best_loss = avg_loss
-                    self.best_info = 'best: e{}_i{}'.format(self.current_epoch,
-                                                        self.current_iteration)
                 avg_loss = 0
 
     def validate(self):
@@ -207,14 +210,11 @@ class Im2latex(BaseAgent):
 
                 logits = self.model(imgs) # [B, MAXLEN, VOCABSIZE]
 
-                loss = self.criterion(tgt4cal_loss, logits)
+                loss = self.criterion(logits, tgt4cal_loss)
                 reg_loss = None
-                for param in model.parameters():
-                    if reg_loss is None:
-                        reg_loss = 0.5 * torch.sum(param**2)
-                    else:
-                        reg_loss = reg_loss + 0.5 * param.norm(2)**2
-                loss += reg_loss * 0.9
+                for param in self.model.parameters():
+                        reg_loss += torch.norm(param)
+                loss += reg_loss * self.cfg.L2_lambda
                 tqdm_bar.set_description('loss={}'.format(loss))
                 self.optimizer.step()
 
