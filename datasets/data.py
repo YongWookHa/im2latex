@@ -26,9 +26,6 @@ class Im2LatexDataset(Dataset):
         else:
             raise NotImplementedError
 
-        transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize([0.5], [0.5])])
-
         # tokens
         self.NullTokenID, self.StartTokenID = 0, 1
 
@@ -41,9 +38,9 @@ class Im2LatexDataset(Dataset):
         tqdm_bar = tqdm(enumerate(open(formula_path, 'r')), desc="DataLoading")
         for i, form in tqdm_bar:
             if config.debug and i > 500: break
-            img = Image.open("{}/{}.png".format(image_path, i))
+            img_fn = "{}/{}.png".format(image_path, i)
             form = form.split()[:config.max_len]
-            self.dataset.append((transform(img), form))
+            self.dataset.append((img_fn, form))
 
             # build vocab
             if mode == "train":
@@ -52,7 +49,7 @@ class Im2LatexDataset(Dataset):
                         self.token2id[token] = cnt
                         self.id2token[cnt] = token
                         cnt += 1
-        if mode == "train":
+        if mode == "train" and config.build_new_vocab:
             print('{} Words Vocab Built'.format(len(self.token2id)))
             torch.save({
                 'id2token' : self.id2token,
@@ -66,7 +63,7 @@ class Im2LatexDataset(Dataset):
                 self.token2id = vocab['token2id']
             except FileNotFoundError:
                 print("vocab file not found!")
-                raise
+                print("use built vocab..")
 
 
     def __getitem__(self, index):
@@ -82,14 +79,14 @@ class custom_collate(object):
     def __init__(self, token2id, max_len):
         self.token2id = token2id
         self.max_len = max_len
+        self.transform = transforms.Compose([transforms.ToTensor(),
+                                        transforms.Normalize([0.5], [0.5])])
 
     def __call__(self, batch):
         # filter the pictures that have different weight or height
-        size = batch[0][0].size()
-        batch = [img_formula for img_formula in batch
-                if img_formula[0].size() == size]
+        img_fn, formulas = zip(*batch)
+        imgs = [self.transform(Image.open(fn).convert('L')) for fn in img_fn]
 
-        imgs, formulas = zip(*batch)
         # targets for training , begin with START_TOKEN
         tgt4training = self.formulas2tensor(self.add_start_token(formulas),
                                             self.token2id)
@@ -110,13 +107,7 @@ class custom_collate(object):
         tensors = torch.ones(batch_size, self.max_len, dtype=torch.long) * EOS
         for i, formula in enumerate(formulas):
             for j, token in enumerate(formula[: self.max_len]):
-                try:
-                    tensors[i][j] = token2id[token]
-                except IndexError:
-                    print('size of tensors:', tensors.size())
-                    print('i, j:', i, j)
-                    print('token:', token)
-                    raise
+                tensors[i][j] = torch.tensor(token2id[token])
         return tensors
 
 
