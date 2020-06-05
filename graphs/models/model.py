@@ -16,55 +16,54 @@ class Im2LatexModel(nn.Module):
         """
         super(Im2LatexModel, self).__init__()
         self.cfg = cfg
+        self.device = torch.device('cuda' if torch.cuda.is_available()
+                                          else 'cpu')
+        self.out_size = out_size
+        self.lstm_hidden_size = cfg.lstm_hidden_size
+        enc_dim = cfg.enc_dim
         emb_dim = cfg.emb_dim
-        dec_rnn_h = cfg.dec_rnn_h
+        attn_dim = out_size if cfg.attn_dim == "vocab_size" else cfg.attn_dim
 
         # define layers
         self.cnn_encoder = nn.Sequential(
             nn.Conv2d(1, 64, kernel_size=3, padding=1, stride=1),
-            nn.ReLU(),
+            nn.Tanh(),
             nn.MaxPool2d(kernel_size=2, padding=0, stride=2),
 
             nn.Conv2d(64, 128, kernel_size=3, padding=1, stride=1),
-            nn.ReLU(),
+            nn.Tanh(),
             nn.MaxPool2d(kernel_size=2, padding=0, stride=2),
 
             nn.Conv2d(128, 256, kernel_size=3, padding=1, stride=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-
-            nn.Conv2d(256, 256, kernel_size=3, padding=1, stride=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=(1, 2), padding=0, stride=(1, 2)),
+            nn.Tanh(),
+            nn.MaxPool2d(kernel_size=2, padding=0, stride=2),
 
             nn.Conv2d(256, 512, kernel_size=3, padding=1, stride=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=(2, 1), padding=0, stride=(2, 1)),
+            nn.Tanh(),
+            nn.MaxPool2d(kernel_size=2, padding=0, stride=2),
 
-            nn.Conv2d(512, 512, 3, 1, 1),
-            nn.BatchNorm2d(512)
+            nn.Conv2d(512, 512, kernel_size=3, padding=1, stride=1),
+            nn.Tanh(),
+            nn.MaxPool2d(kernel_size=2, padding=0, stride=2),
         )
         self.unfold = nn.Unfold(1)
         self.embedding = nn.Embedding(out_size, emb_dim)
 
-        self.init_wh1 = nn.Linear(512, dec_rnn_h)
-        self.init_wc1 = nn.Linear(512, dec_rnn_h)
-        self.init_wh2 = nn.Linear(512, dec_rnn_h)
-        self.init_wc2 = nn.Linear(512, dec_rnn_h)
-        self.init_o = nn.Linear(512, dec_rnn_h)
+        # self.init_wh1 = nn.Linear(512, lstm_hidden_size)
+        # self.init_wc1 = nn.Linear(512, lstm_hidden_size)
+        # self.init_wh2 = nn.Linear(512, lstm_hidden_size)
+        # self.init_wc2 = nn.Linear(512, lstm_hidden_size)
+        # self.init_o = nn.Linear(512, lstm_hidden_size)
 
-        self.attn_W1 = nn.Linear(dec_rnn_h, 512, bias=False)
-        self.attn_W2 = nn.Linear(512, 512, bias=False)
+        self.DeepOutputLayer = nn.Linear(
+                        self.lstm_hidden_size + enc_dim + emb_dim, out_size)
 
-        self.dec_W3 = nn.Linear(dec_rnn_h*2, dec_rnn_h, bias=False)
-        self.dec_W4 = nn.Linear(dec_rnn_h, out_size, bias=False)
+        self.attn_wh = nn.Linear(self.lstm_hidden_size, attn_dim)
+        self.attn_wa = nn.Linear(enc_dim, attn_dim)
+        self.attn_combine = nn.Linear(attn_dim, 1)
 
-        self.attn = nn.Linear(512, 512)
-        self.attn_combine = nn.Linear(512+512, 512)
-
-        self.LSTM = nn.LSTM(emb_dim+512, hidden_size=512, num_layers=2,
-                              bidirectional=False, batch_first=True)
+        self.LSTM = nn.LSTM(emb_dim+enc_dim, hidden_size=self.lstm_hidden_size,
+                                                num_layers=2, batch_first=True)
 
 
     def forward(self, imgs, formulas=None, is_train=False):
@@ -80,7 +79,12 @@ class Im2LatexModel(nn.Module):
 
         logits = []
         bos = 0
-        logit = torch.zeros((imgs.size(0), max_seq_len))
+        bs = imgs.size(0)
+
+        if not is_train:
+            logit = torch.zeros((bs, self.out_size))
+            logit[:, 0] = torch.tensor(1)
+            logit = logit.unsqueeze(1).to(self.device)
         prev_h, dec_states = self.init_decoder(memoryBank)
 
         for i in range(max_seq_len):
@@ -89,13 +93,12 @@ class Im2LatexModel(nn.Module):
             else:
                 tgt = torch.argmax(logit, dim=2).squeeze(1)
             prev_w = self.embedding(tgt).unsqueeze(1)
-            C_t = self.get_attn(prev_h, memoryBank).unsqueeze(1)  # [B, 1, D]
+            z_t = self.get_soft_attn(prev_h, memoryBank).unsqueeze(1)  # [B, 1, D]
             self.LSTM.flatten_parameters()
-            h_t, dec_states =  self.LSTM(torch.cat([prev_w, prev_h], dim=2), dec_states)
-            O_t = torch.tanh(self.dec_W3(torch.cat([h_t, C_t], dim=2)))  # O_t = [B, 1, D]
-            logit = F.log_softmax(self.dec_W4(O_t), dim=2)
-            logits.append(logit)
+            h_t, dec_states =  self.LSTM(torch.cat([z_t, prev_w], dim=2), dec_states)
+            logit = self.DeepOutputLayer(torch.cat([h_t, z_t, prev_w], dim=2))
 
+            logits.append(F.softmax(logit, dim=2))
             prev_h = h_t
 
         return torch.stack(logits).permute(1,0,2,3).squeeze(2)
@@ -108,27 +111,36 @@ class Im2LatexModel(nn.Module):
         memoryBank += add_positional_features(memoryBank)
         return memoryBank
 
-    def get_attn(self, prev_h, memoryBank):
+    def get_soft_attn(self, prev_h, memoryBank):
         '''
         prev_h : [B, 1, D]
-        memoryBank : [B, L, D]
+        memoryBank : [B, L, enc_dim]
+        return :
         '''
         # Attention
-        a = torch.tanh(torch.add(self.attn_W1(prev_h),
-                                 self.attn_W2(memoryBank)))
-        attn_weight = F.softmax(a, dim=2)  # alpha: [B, L]
+        att_h = self.attn_wh(prev_h)
+        att_m = self.attn_wa(memoryBank)
 
-        C_t = torch.sum(torch.mul(attn_weight, memoryBank), dim=1)  # [B, D]
+        att = self.attn_combine(torch.tanh(att_h+att_m))
+        attn_weight = F.softmax(att, dim=1)  # alpha: [B, L]
 
-        return C_t
+        z = torch.sum(torch.mul(attn_weight, memoryBank), dim=1)  # [B, L]
 
+        return z
 
     def init_decoder(self, memoryBank):
-        mean_enc_out = memoryBank.mean(dim=1)
-        h1 = torch.tanh(self.init_wh1(mean_enc_out))
-        c1 = torch.tanh(self.init_wc1(mean_enc_out))
-        h2 = torch.tanh(self.init_wh2(mean_enc_out))
-        c2 = torch.tanh(self.init_wc2(mean_enc_out))
-        o = torch.tanh(self.init_o(mean_enc_out)).unsqueeze(1)
+        bs = memoryBank.size(0)
+        o = torch.zeros((bs, 1, self.lstm_hidden_size)).to(self.device)
+        h = c = torch.zeros((2, bs, self.lstm_hidden_size)).to(self.device)
 
-        return o, (torch.stack([h1, h2]), torch.stack([c1, c2]))
+        return o, (h, c)
+
+#    def init_decoder(self, memoryBank):
+#        mean_enc_out = memoryBank.mean(dim=1)
+#        h1 = torch.tanh(self.init_wh1(mean_enc_out))
+#        c1 = torch.tanh(self.init_wc1(mean_enc_out))
+#        h2 = torch.tanh(self.init_wh2(mean_enc_out))
+#        c2 = torch.tanh(self.init_wc2(mean_enc_out))
+#        o = torch.tanh(self.init_o(mean_enc_out)).unsqueeze(1)
+#
+#        return o, (torch.stack([h1, h2]), torch.stack([c1, c2]))
