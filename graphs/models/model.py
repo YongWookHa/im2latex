@@ -26,25 +26,30 @@ class Im2LatexModel(nn.Module):
 
         # define layers
         self.cnn_encoder = nn.Sequential(
-            nn.Conv2d(1, 64, kernel_size=3, padding=1, stride=1),
-            nn.Tanh(),
-            nn.MaxPool2d(kernel_size=2, padding=0, stride=2),
+            nn.Conv2d(1, 64, 3, 1, 1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2, 1),
 
-            nn.Conv2d(64, 128, kernel_size=3, padding=1, stride=1),
-            nn.Tanh(),
-            nn.MaxPool2d(kernel_size=2, padding=0, stride=2),
+            nn.Conv2d(64, 128, 3, 1, 1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2, 1),
 
-            nn.Conv2d(128, 256, kernel_size=3, padding=1, stride=1),
-            nn.Tanh(),
-            nn.MaxPool2d(kernel_size=2, padding=0, stride=2),
+            nn.Conv2d(128, 256, 3, 1, 1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
 
-            nn.Conv2d(256, 512, kernel_size=3, padding=1, stride=1),
-            nn.Tanh(),
-            nn.MaxPool2d(kernel_size=2, padding=0, stride=2),
+            nn.Conv2d(256, 256, 3, 1, 1),
+            nn.ReLU(),
+            nn.MaxPool2d((1, 2), (1, 2), 0),
 
-            nn.Conv2d(512, 512, kernel_size=3, padding=1, stride=1),
-            nn.Tanh(),
-            nn.MaxPool2d(kernel_size=2, padding=0, stride=2),
+            nn.Conv2d(256, 512, 3, 1, 1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+
+            nn.MaxPool2d((2, 1), (2, 1), 0),
+            nn.Conv2d(512, 512, 3, 1, 1),
+            nn.BatchNorm2d(512),
+            nn.ReLU()
         )
         self.unfold = nn.Unfold(1)
         self.embedding = nn.Embedding(out_size, emb_dim)
@@ -98,7 +103,7 @@ class Im2LatexModel(nn.Module):
             h_t, dec_states =  self.LSTM(torch.cat([z_t, prev_w], dim=2), dec_states)
             logit = self.DeepOutputLayer(torch.cat([h_t, z_t, prev_w], dim=2))
 
-            logits.append(F.softmax(logit, dim=2))
+            logits.append(F.log_softmax(logit, dim=2))
             prev_h = h_t
 
         return torch.stack(logits).permute(1,0,2,3).squeeze(2)
