@@ -12,7 +12,8 @@ def cal_loss(logits, targets):
                 [B, MAX_LEN]
     """
     EOS = 1
-    padding = torch.ones_like(targets) * EOS
+    NULL = -1
+    padding = torch.ones_like(targets) * NULL  # to count EOS token for calculating loss
     mask = (targets != padding)
 
     targets = targets.masked_select(mask)
