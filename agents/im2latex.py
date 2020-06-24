@@ -235,18 +235,23 @@ class Im2latex(BaseAgent):
         One cycle of model validation
         :return:
         """
-        tqdm_bar = tqdm(enumerate(self.valid_loader),
+        tqdm_bar = tqdm(enumerate(self.valid_loader, 1),
                         total=len(self.valid_loader))
         self.model.eval()
         total_perplexity = 0
         with torch.no_grad():
-            for i, (imgs, tgt) in enumerate(tqdm_bar, 1):
+            for i, (imgs, tgt) in tqdm_bar:
                 imgs = imgs.to(self.device).float()
 
                 tgt = tgt.to(self.device).long()
 
-                perplexity = self.model(imgs) # [B, MAXLEN, VOCABSIZE]
+                logits = self.model(imgs) # [B, MAXLEN, VOCABSIZE]
+                perplexity = self.criterion(logits, tgt)
                 total_perplexity += perplexity.item()
+
+                if i % self.cfg.log_freq == 0:
+                    print('logits[0]:', logits[0].argmax(1))
+                    print('tgt[0]:', tgt[0])
         self.logger.info('[VALIDATE] Perplexity :', total_perplexity/i)
 
 
