@@ -1,6 +1,3 @@
-"""
-BTCKRW Dataset, DataLoader implementation
-"""
 import torch
 import numpy as np
 import os
@@ -31,8 +28,8 @@ class Im2LatexDataset(Dataset):
 
         # load image and formula
         self.dataset = []
-        self.id2token = {0:'\\bos', 1:'\\eos'}
-        self.token2id = {'\\bos':0, '\\eos':1}
+        self.id2token = {0:'[START]', 1:'[END]'}
+        self.token2id = {'[START]':0, '[END]':1}
         cnt = 2
         print('Reading from {}'.format(formula_path))
         tqdm_bar = tqdm(enumerate(open(formula_path, 'r')), desc="DataLoading")
@@ -65,9 +62,11 @@ class Im2LatexDataset(Dataset):
                 print("vocab file not found!")
                 print("use built vocab..")
 
+        # set vocab_size (call by reference)
+        config.vocab_size = len(self.id2token)
 
-    def __getitem__(self, index):
-        return self.dataset[index]
+    def __getitem__(self, idx):
+        return self.dataset[idx]
 
     def __len__(self):
         return len(self.dataset)
@@ -87,32 +86,25 @@ class custom_collate(object):
         img_fn, formulas = zip(*batch)
         imgs = [self.transform(Image.open(fn).convert('L')) for fn in img_fn]
 
-        # targets for training , begin with START_TOKEN
-        tgt4training = self.formulas2tensor(self.add_start_token(formulas),
-                                            self.token2id)
-
         # targets for calculating loss , end with END_TOKEN
-        tgt4cal_loss = self.formulas2tensor(self.add_end_token(formulas),
-                                            self.token2id)
+        tgt = self.formulas2tensor(formulas, self.token2id)
 
         imgs = torch.stack(imgs, dim=0)
-        return imgs, tgt4training, tgt4cal_loss
-
+        return (imgs, tgt)
 
     def formulas2tensor(self, formulas, token2id):
         """convert formula to tensor"""
 
         batch_size = len(formulas)
         BOS, EOS = 0, 1
-        tensors = torch.ones(batch_size, self.max_len, dtype=torch.long) * EOS
+        tensors = torch.ones((batch_size, self.max_len+1), dtype=torch.long) * EOS
         for i, formula in enumerate(formulas):
-            for j, token in enumerate(formula[: self.max_len]):
-                tensors[i][j] = torch.tensor(token2id[token])
+            assert len(formula) <= self.max_len
+            tensors[i][:len(formula)] = torch.tensor([token2id[token] for token in formula])
         return tensors
 
+    # def add_start_token(self, formulas):
+    #     return [['\\bos']+formula for formula in formulas]
 
-    def add_start_token(self, formulas):
-        return [['\\bos']+formula for formula in formulas]
-
-    def add_end_token(self, formulas):
-        return [formula+['\\eos'] for formula in formulas]
+    # def add_end_token(self, formulas):
+    #     return [formula+['\\eos'] for formula in formulas]

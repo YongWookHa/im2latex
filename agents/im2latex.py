@@ -4,7 +4,6 @@ import numpy as np
 import shutil
 from functools import partial
 from tqdm import tqdm
-from torch import nn
 from torch.backends import cudnn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split
@@ -31,21 +30,37 @@ class Im2latex(BaseAgent):
 
         # dataset
         train_dataset = Im2LatexDataset(cfg, mode="train")
-        valid_dataset = Im2LatexDataset(cfg, mode="valid")
-        self.id2token = valid_dataset.id2token
-        self.token2id = valid_dataset.token2id
+        self.id2token = train_dataset.id2token
+        self.token2id = train_dataset.token2id
 
         collate = custom_collate(self.token2id, cfg.max_len)
 
         self.train_loader = DataLoader(train_dataset, batch_size=cfg.bs,
                             shuffle=cfg.data_shuffle, num_workers=cfg.num_w,
                             collate_fn=collate, drop_last=True)
-        self.valid_loader = DataLoader(valid_dataset, batch_size=cfg.bs,
-                            shuffle=cfg.data_shuffle, num_workers=cfg.num_w,
-                            collate_fn=collate, drop_last=True)
+        if cfg.valid_img_path != "":
+            valid_dataset = Im2LatexDataset(cfg, mode="valid")
+            self.valid_loader = DataLoader(valid_dataset, batch_size=cfg.bs,
+                                shuffle=cfg.data_shuffle, num_workers=cfg.num_w,
+                                collate_fn=collate, drop_last=True)
 
         # define models
-        self.model = Im2LatexModel(cfg, len(self.id2token))  # fill the parameters
+        self.model = Im2LatexModel(cfg)  # fill the parameters
+        # weight initialization setting
+        for name, param in self.model.named_parameters():
+            if 'localization_fc2' in name:
+                print(f'Skip {name} as it is already initialized')
+                continue
+            try:
+                if 'bias' in name:
+                    torch.nn.init.constant_(param, 0.0)
+                elif 'weight' in name:
+                    torch.nn.init.kaiming_normal_(param)
+            except Exception as e:  # for batchnorm.
+                if 'weight' in name:
+                    param.data.fill_(1)
+                continue
+
         self.model = DataParallel(self.model)
         # define criterion
         self.criterion = cal_loss
@@ -55,11 +70,13 @@ class Im2latex(BaseAgent):
                                             lr=cfg.lr,
                                             betas=( cfg.adam_beta_1,
                                                     cfg.adam_beta_2))
+        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
+                                                    step_size=2, gamma=0.5)
 
         # initialize counter
         self.current_epoch = 1
         self.current_iteration = 1
-        self.best_loss = 100
+        self.best_metric = 100
         self.best_info = ''
 
         # set the manual seed for torch
@@ -134,7 +151,7 @@ class Im2latex(BaseAgent):
         try:
             if self.cfg.mode == 'train':
                 self.train()
-            elif self.cfg.mode == 'valid':
+            elif self.cfg.mode == 'predict':
                 self.predict()
 
         except KeyboardInterrupt:
@@ -145,9 +162,14 @@ class Im2latex(BaseAgent):
         Main training loop
         :return:
         """
+        prev_perplexity = 0
         for e in range(self.current_epoch, self.cfg.epochs+1):
-            self.train_one_epoch()
-            self.validate()
+            this_perplexity = self.train_one_epoch()
+            if prev_perplexity / this_perplexity < 1.2:
+                self.scheduler.step()
+            prev_perplexity = this_perplexity
+            if self.cfg.valid_img_path:
+                self.validate()
             self.save_checkpoint()
             self.current_epoch += 1
 
@@ -156,43 +178,57 @@ class Im2latex(BaseAgent):
         One epoch of training
         :return:
         """
-        tqdm_bar = tqdm(enumerate(self.train_loader),
+        tqdm_bar = tqdm(enumerate(self.train_loader, 1),
                         total=len(self.train_loader))
 
         self.model.train()
         avg_loss = 0
-        for i, (imgs, tgt4training, tgt4cal_loss) in tqdm_bar:
+        last_avg_perplexity, avg_perplexity = 0, 0
+        for i, (imgs, tgt) in tqdm_bar:
             imgs = imgs.float().to(self.device)
-            tgt4training = tgt4training.long().to(self.device)
-            tgt4cal_loss = tgt4cal_loss.long().to(self.device)
+            tgt = tgt.long().to(self.device)
 
             # [B, MAXLEN, VOCABSIZE]
-            logits = self.model(imgs, tgt4training, is_train=True)
-            loss = self.criterion(logits, tgt4cal_loss)
+            logits = self.model(imgs, tgt, is_train=True)
+
+            perplexity = self.criterion(logits, tgt)
             # L2 regularization
             reg_loss = 0
             for param in self.model.parameters():
                 reg_loss += torch.norm(param)
-            loss += reg_loss * self.cfg.L2_lambda
+            loss = perplexity + reg_loss * self.cfg.L2_lambda
+
             avg_loss += loss.item()
+            avg_perplexity += perplexity.item()
 
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip)
             self.optimizer.step()
             self.current_iteration += 1
 
             # logging
-            if self.current_iteration % self.cfg.log_freq == 0:
+            if i % self.cfg.log_freq == 0:
                 avg_loss = avg_loss / self.cfg.log_freq
-                self.summary_writer.add_scalar('loss', avg_loss,
+                avg_perplexity = avg_perplexity / self.cfg.log_freq
+                self.summary_writer.add_scalar('loss/train', avg_loss,
+                                            global_step=self.current_iteration)
+                self.summary_writer.add_scalar('perplexity/train', avg_perplexity,
                                             global_step=self.current_iteration)
                 tqdm_bar.set_description(
-                    "reg_loss: {} | avg_loss: {}".format(
-                                        reg_loss*self.cfg.L2_lambda, avg_loss))
+                    "reg_loss: {} | avg_perplexity: {}".format(
+                                        reg_loss*self.cfg.L2_lambda, avg_perplexity))
+
+                print('logits[0]:', logits[0].argmax(1))
+                print('tgt[0]:', tgt[0])
+
                 # save if best
-                if  self.current_epoch > 10 and avg_loss < self.best_loss:
+                if  self.current_epoch > 10 and avg_perplexity < self.best_metric:
                     self.save_checkpoint(is_best=True)
-                    self.best_loss = avg_loss
-                avg_loss = 0
+                    self.best_metric = avg_perplexity
+                last_avg_perplexity = avg_perplexity
+                avg_loss, avg_perplexity = 0, 0
+
+        return last_avg_perplexity
 
     def validate(self):
         """
@@ -202,28 +238,43 @@ class Im2latex(BaseAgent):
         tqdm_bar = tqdm(enumerate(self.valid_loader),
                         total=len(self.valid_loader))
         self.model.eval()
+        total_perplexity = 0
         with torch.no_grad():
-            for i, (imgs, tgt4training, tgt4cal_loss) in tqdm_bar:
+            for i, (imgs, tgt) in enumerate(tqdm_bar, 1):
                 imgs = imgs.to(self.device).float()
 
-                tgt4cal_loss = tgt4cal_loss.to(self.device).long()
+                tgt = tgt.to(self.device).long()
 
-                logits = self.model(imgs) # [B, MAXLEN, VOCABSIZE]
+                perplexity = self.model(imgs) # [B, MAXLEN, VOCABSIZE]
+                total_perplexity += perplexity.item()
+        self.logger.info('[VALIDATE] Perplexity :', total_perplexity/i)
 
-                loss = self.criterion(logits, tgt4cal_loss)
-                reg_loss = None
-                for param in self.model.parameters():
-                        reg_loss += torch.norm(param)
-                loss += reg_loss * self.cfg.L2_lambda
-                tqdm_bar.set_description('loss={}'.format(loss))
-                self.optimizer.step()
 
     def predict(self):
         """
         get predict results
         :return:
         """
-        pass
+        from torchvision import transforms
+        from pathlib import Path
+        from PIL import Image
+
+        self.model.eval()
+        transform = transforms.Compose([transforms.ToTensor(),
+                                        transforms.Normalize([0.5], [0.5])])
+        image_path = Path(self.cfg.test_img_path)
+        with torch.no_grad():
+            images = []
+            for i, img in enumerate(image_path.glob('*.png')):
+                print(i, img)
+                img = Image.open(img)
+                img = transform(img)
+                images.append(img)
+            images = torch.stack(images, dim=0)
+            logit = self.model(images)  # [B, max_len, vocab_size]
+
+        for i, output in enumerate(logit):
+            print(i, output)  # [self.id2token[out.item()] for out in output])
 
     def finalize(self):
         """
