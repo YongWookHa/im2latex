@@ -53,9 +53,9 @@ class Decoder(nn.Module):
             for i in range(num_steps):
                 char_onehots = self._char_to_onehot(targets, onehot_dim=self.num_classes)
                 hidden, alpha = self.attention_cell(hidden, batch_H, char_onehots)
-                probs_step = self.generator(hidden[0])
+                probs_step = F.softmax(self.generator(hidden[0]), dim=1)
                 probs[:, i, :] = probs_step
-                _, next_input = probs_step.max(1)
+                next_input = probs_step.argmax(1)
                 targets = next_input
 
         return probs  # batch_size x num_steps x num_classes
