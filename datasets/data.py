@@ -101,7 +101,7 @@ class custom_collate(object):
         for i, formula in enumerate(formulas):
             assert len(formula) <= self.max_len
             formula_token = [token2id[token] for token in formula] + [EOS]  # add EOS
-            tensors[i][:len(formula)] = torch.tensor(formula_token)
+            tensors[i][:len(formula_token)] = torch.tensor(formula_token)
         return tensors
 
     # def add_start_token(self, formulas):
