@@ -97,11 +97,11 @@ class custom_collate(object):
 
         batch_size = len(formulas)
         BOS, EOS = token2id['[START]'], token2id['[END]']
-        # max_len + 2: include BOS and EOS
-        tensors = torch.ones((batch_size, self.max_len+2), dtype=torch.long) * EOS
+        # max_len + 1: include EOS
+        tensors = torch.ones((batch_size, self.max_len+1), dtype=torch.long) * EOS
         for i, formula in enumerate(formulas):
             assert len(formula) <= self.max_len
-            formula_token = [BOS] + [token2id[token] for token in formula]  # add BOS
+            formula_token = [token2id[token] for token in formula]
             tensors[i][:len(formula_token)] = torch.tensor(formula_token)  # last token will always be EOS
         return tensors
 
