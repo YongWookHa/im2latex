@@ -215,18 +215,21 @@ class Im2latex(BaseAgent):
                 self.summary_writer.add_scalar('perplexity/train', avg_perplexity,
                                             global_step=self.current_iteration)
                 tqdm_bar.set_description(
-                    "reg_loss: {} | avg_perplexity: {}".format(
-                                        reg_loss*self.cfg.L2_lambda, avg_perplexity))
+                    "e{} | reg_loss: {:.3f} | avg_perplexity: {:.3f}".format(
+                    self.current_epoch, reg_loss*self.cfg.L2_lambda, avg_perplexity))
 
-                print('logits[0]:', logits[0].argmax(1))
-                print('tgt[0]:', tgt[0])
+                # print('logits[0]:', logits[0].argmax(1))
+                # print('tgt[0]:', tgt[0])
 
                 # save if best
-                if  self.current_epoch > 10 and avg_perplexity < self.best_metric:
+                if  avg_perplexity < self.best_metric:
                     self.save_checkpoint(is_best=True)
                     self.best_metric = avg_perplexity
                 last_avg_perplexity = avg_perplexity
                 avg_loss, avg_perplexity = 0, 0
+
+        print('logits[0]:', logits[0].argmax(1))
+        print('tgt[0]:', tgt[0])
 
         return last_avg_perplexity
 
@@ -277,6 +280,7 @@ class Im2latex(BaseAgent):
                 images.append(img)
             images = torch.stack(images, dim=0)
             logit = self.model(images)  # [B, max_len, vocab_size]
+            logit = logit.argmax(2)
 
         for i, output in enumerate(logit):
             print(i, output)  # [self.id2token[out.item()] for out in output])
