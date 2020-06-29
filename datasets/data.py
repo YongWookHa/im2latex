@@ -28,8 +28,8 @@ class Im2LatexDataset(Dataset):
 
         # load image and formula
         self.dataset = []
-        self.id2token = {0:'[START]', 1:'[END]'}
-        self.token2id = {'[START]':0, '[END]':1}
+        self.id2token = {0:'[START]', 1:'[END]', 2: '[NULL]'}
+        self.token2id = {'[START]':0, '[END]':1, '[NULL]': 2}
         cnt = 2
         print('Reading from {}'.format(formula_path))
         tqdm_bar = tqdm(enumerate(open(formula_path, 'r')), desc="DataLoading")
@@ -96,12 +96,12 @@ class custom_collate(object):
         """convert formula to tensor"""
 
         batch_size = len(formulas)
-        BOS, EOS = token2id['[START]'], token2id['[END]']
+        EOS, NULL = token2id['[END]'], token2id['[NULL]']
         # max_len + 1: include EOS
-        tensors = torch.ones((batch_size, self.max_len+1), dtype=torch.long) * EOS
+        tensors = torch.ones((batch_size, self.max_len+1), dtype=torch.long) * NULL
         for i, formula in enumerate(formulas):
             assert len(formula) <= self.max_len
-            formula_token = [token2id[token] for token in formula]
+            formula_token = [token2id[token] for token in formula] + [EOS]
             tensors[i][:len(formula_token)] = torch.tensor(formula_token)  # last token will always be EOS
         return tensors
 

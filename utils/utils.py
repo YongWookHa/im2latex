@@ -11,8 +11,8 @@ def cal_loss(logits, targets):
         targets: target formulas
                 [B, MAX_LEN]
     """
-    EOS = 1
-    padding = torch.ones_like(targets) * EOS
+    EOS, NULL = 1, 2
+    padding = torch.ones_like(targets) * NULL
     mask = (targets != padding)
 
     targets = targets.masked_select(mask)
