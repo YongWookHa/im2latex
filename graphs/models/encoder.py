@@ -9,27 +9,22 @@ class Encoder(nn.Module):
         self.cnn = CNN()
 
         # transform (H' -> 1)
-        self.AdaptiveAvgPool = nn.AdaptiveAvgPool2d((None, 1))
-        '''
+        # self.AdaptiveAvgPool = nn.AdaptiveAvgPool2d((None, 1))
+
         ## to use all grids
-        # self.unold = nn.Unfold(1)
-        '''
+        self.unfold = nn.Unfold(1)
 
-        self.bi_lstm = nn.Sequential(
-            BidirectionalLSTM(cfg.L, cfg.enc_hidden_size, cfg.enc_hidden_size),
-            BidirectionalLSTM(*[cfg.enc_hidden_size]*2, cfg.vocab_size)
-        )
-
+        # self.bi_lstm = BidirectionalLSTM(512, cfg.enc_hidden_size, cfg.vocab_size)
+        self.linear = nn.Linear(512, cfg.vocab_size)
 
     def forward(self, images):
         """ Feature Extraction """
         encoded_imgs = self.cnn(images)  # [B, 512, H', W']
-        encoded_imgs = self.AdaptiveAvgPool(encoded_imgs.permute(0, 3, 1, 2))  # [B, W', 512, H']
-        encoded_imgs = encoded_imgs.squeeze(3)  # [B, W', 512]
-        encoded_imgs += add_positional_features(encoded_imgs)  # [B, W', 512]
+        encoded_imgs = self.unfold(encoded_imgs).permute(0,2,1)  # [B, L=W'*H', 512]
+        encoded_imgs += add_positional_features(encoded_imgs)  # [B, L, 512]
 
         """ Sequence Modeling """
-        contextual_features = self.bi_lstm(encoded_imgs.permute(0,2,1))
+        contextual_features = self.linear(encoded_imgs)
 
         return contextual_features
 
@@ -72,7 +67,7 @@ class CNN(nn.Module):
 class BidirectionalLSTM(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super(BidirectionalLSTM, self).__init__()
-        self.rnn = nn.LSTM(input_size, hidden_size, bidirectional=True, batch_first=True)
+        self.rnn = nn.LSTM(input_size, hidden_size, bidirectional=True, num_layers=2, batch_first=True)
         self.linear = nn.Linear(hidden_size * 2, output_size)
 
     def forward(self, inp):
