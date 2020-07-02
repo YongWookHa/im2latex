@@ -30,7 +30,7 @@ class Im2LatexDataset(Dataset):
         self.dataset = []
         self.id2token = {0:'[START]', 1:'[END]', 2: '[NULL]'}
         self.token2id = {'[START]':0, '[END]':1, '[NULL]': 2}
-        cnt = 2
+        cnt = len(self.id2token)
         print('Reading from {}'.format(formula_path))
         tqdm_bar = tqdm(enumerate(open(formula_path, 'r')), desc="DataLoading")
         for i, form in tqdm_bar:
@@ -78,8 +78,7 @@ class custom_collate(object):
     def __init__(self, token2id, max_len):
         self.token2id = token2id
         self.max_len = max_len
-        self.transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize([0.5], [0.5])])
+        self.transform = transforms.Compose([transforms.ToTensor()])
 
     def __call__(self, batch):
         # filter the pictures that have different weight or height
