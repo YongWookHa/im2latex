@@ -1,0 +1,4 @@
+*.sh
+data/*
+*/__pycache__/*
+.vscode/*
