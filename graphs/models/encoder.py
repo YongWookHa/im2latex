@@ -8,13 +8,8 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.cnn = CNN()
 
-        # transform (H' -> 1)
-        # self.AdaptiveAvgPool = nn.AdaptiveAvgPool2d((None, 1))
-
         ## to use all grids
         self.unfold = nn.Unfold(1)
-
-        # self.bi_lstm = BidirectionalLSTM(512, cfg.enc_hidden_size, cfg.vocab_size)
         self.linear = nn.Linear(512, cfg.vocab_size)
 
     def forward(self, images):
@@ -61,22 +56,4 @@ class CNN(nn.Module):
         )
 
     def forward(self, images):
-
         return self.cnn(images)  # [B, W', 512]
-
-class BidirectionalLSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
-        super(BidirectionalLSTM, self).__init__()
-        self.rnn = nn.LSTM(input_size, hidden_size, bidirectional=True, num_layers=2, batch_first=True)
-        self.linear = nn.Linear(hidden_size * 2, output_size)
-
-    def forward(self, inp):
-        """
-        input : visual feature [batch_size x T x input_size]
-        output : contextual feature [batch_size x T x output_size]
-        """
-        self.rnn.flatten_parameters()
-
-        recurrent, _ = self.rnn(inp)  # batch_size x T x input_size -> batch_size x T x (2*hidden_size)
-        output = self.linear(recurrent)  # batch_size x T x output_size
-        return output
