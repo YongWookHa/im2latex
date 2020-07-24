@@ -2,7 +2,7 @@
   "exp_name": "im2latex-draft",
   "agent": "Im2latex",
   "mode": "train",
-  "debug": false,
+  "debug": true,
 
   "build_new_vocab": true,
   "cuda": true,
@@ -11,17 +11,17 @@
 
   "log_freq" : 100,
   "train_test_ratio": 0.8,
-  "lr":0.001,
+  "lr":0.00025,
   "input_channels": 1,
   "bs": 48,
 
-  "train_img_path" : "data/output2",
-  "valid_img_path" : "",
-  "train_formula_path" : "data/output.txt",
-  "valid_formula_path" : "",
-  "test_img_path" : "data/test_img",
+  "train_img_path" : "data/train_imgs",
+  "valid_img_path" : "data/valid_imgs",
+  "train_formula_path" : "data/train_formula.txt",
+  "valid_formula_path" : "data/train_formaul.txt",
+  "test_img_path" : "",
 
-  "epochs": 100,
+  "epochs": 50,
   "adam_beta_1" : 0.5,
   "adam_beta_2" : 0.9,
   "L2_lambda" : 0.0005,
@@ -29,14 +29,13 @@
   "grad_clip" : 5,
   "data_shuffle": true,
 
-  "L" : 68,
   "emb_dim" : 80,
-  "enc_hidden_size" : 256,
-  "dec_hidden_size" : 512,
-  "max_len" : 40,
+  "enc_hidden_size" : 512,
+  "dec_hidden_size" : 256,
+  "max_len" : 60,
 
   "log_interval" : 100,
   "num_w": 8,
 
-  "checkpoint_filename" : "experiments/im2latex-draft/checkpoints/best.pt"
+  "checkpoint_filename" : ""
 }
