@@ -82,7 +82,7 @@ class Im2latex(BaseAgent):
         # set the manual seed for torch
         torch.cuda.manual_seed_all(self.cfg.seed)
         if self.cfg.cuda:
-            self.model = self.model.cuda().to(self.device)
+            self.model = self.model.to(self.device)
             self.logger.info("Program will run on *****GPU-CUDA***** ")
         else:
             self.logger.info("Program will run on *****CPU*****\n")
@@ -268,12 +268,11 @@ class Im2latex(BaseAgent):
         from PIL import Image
 
         self.model.eval()
-        transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize([0.5], [0.5])])
+        transform = transforms.ToTensor()
         image_path = Path(self.cfg.test_img_path)
         with torch.no_grad():
             images = []
-            for i, img in enumerate(image_path.glob('*.png')):
+            for i, img in enumerate(image_path.glob('*.jpg')):
                 print(i, img)
                 img = Image.open(img)
                 img = transform(img)
@@ -283,7 +282,7 @@ class Im2latex(BaseAgent):
             logit = logit.argmax(2)
 
         for i, output in enumerate(logit):
-            print(i, output)  # [self.id2token[out.item()] for out in output])
+            print(i, ' '.join([self.id2token[out.item()] for out in output if out.item() != 1]))
 
     def finalize(self):
         """
