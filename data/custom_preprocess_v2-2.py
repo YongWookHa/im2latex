@@ -12,7 +12,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     out_dir = Path(args.output)
 
-    fn_list = list(Path(args.input).glob('*.png'))
+    fn_list_jpg = list(Path(args.input).glob('*.jpg'))
+    fn_list_png = list(Path(args.input).glob('*.png'))
+    fn_list = fn_list_jpg + fn_list_png
     tqdm_bar = tqdm(fn_list, total=len(fn_list), desc='processing')
     for fn in tqdm_bar:
         img = cv2.imread(str(fn))
