@@ -4,8 +4,6 @@ Read Formula Image and translate to LaTeX Grammar, similar to [Show, Attend and 
 
 I've changed the model structure based from [Show, Attend and Tell](https://arxiv.org/abs/1502.03044). 
 
----
-
 ## Overview
 
 This repository is built on base-template of [Pytorch Template](https://github.com/YongWookHa/pytorch-template) which is bi-product of original [Pytorch Project Template](https://github.com/moemen95/Pytorch-Project-Template). Check the template repositories first before getting started.
@@ -13,7 +11,11 @@ This repository is built on base-template of [Pytorch Template](https://github.c
 
 The main difference from [Show, Attend and Tell](https://arxiv.org/abs/1502.03044) is that I replaced row-encoder to positional encoding. And I set less 'max sequence length' with 40. With these changes, I could get `perplexity` of **1.0717** with reliable performance.
 
----
+![](https://www.dropbox.com/s/r3iqjttuqi20jxt/im2latex_0.png?raw=1)  
+im2latex Result = `\partial _ { \mu } ( F ^ { \mu \nu } - e j ^ { \mu } x ^ { \nu } ) : 0 .`
+
+![](https://www.dropbox.com/s/fl1kteqtyd15y72/im2latex_1.png?raw=1)  
+im2latex Result : `e x p \left( - \frac { \partial } { \partial \alpha _ { j } } \theta ^ { i k } \frac { \partial } { \partial \alpha _ { k } } \right)`
 
 ## Usage
 
