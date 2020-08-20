@@ -272,7 +272,7 @@ class Im2latex(BaseAgent):
         image_path = Path(self.cfg.test_img_path)
         with torch.no_grad():
             images = []
-            imgPath = image_path.glob('*.jpg') + image_path.glob('*.png')
+            imgPath = list(image_path.glob('*.jpg')) + list(image_path.glob('*.png'))
             for i, img in enumerate(imgPath):
                 print(i, ':' ,img)
                 img = Image.open(img)
