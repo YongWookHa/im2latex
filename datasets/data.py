@@ -10,7 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 
 
 class Im2LatexDataset(Dataset):
-    def __init__(self, config, mode="train"):
+    def __init__(self, config, mode="train", vocab=None):
         super().__init__()
         self.config = config
 
@@ -31,36 +31,35 @@ class Im2LatexDataset(Dataset):
         self.id2token = {0:'[START]', 1:'[END]', 2: '[NULL]'}
         self.token2id = {'[START]':0, '[END]':1, '[NULL]': 2}
         cnt = len(self.id2token)
-        print('Reading from {}'.format(formula_path))
-        tqdm_bar = tqdm(enumerate(open(formula_path, 'r')), desc="DataLoading")
-        for i, form in tqdm_bar:
-            if config.debug and i > 500: break
-            img_fn = "{}/{}.png".format(image_path, i)
-            form = form.split()[:config.max_len]
-            self.dataset.append((img_fn, form))
 
+        if mode == "train":
             # build vocab
-            if mode == "train":
-                for token in form:
+            print('Reading from {}'.format(config.total_formula_path))
+            tqdm_bar = tqdm(open(config.total_formula_path, 'r'), desc="DataLoading")
+            for line in tqdm_bar:
+                imgFn, form = line.strip('\n').split('\t')
+                for token in form.split():
                     if token not in self.token2id:
                         self.token2id[token] = cnt
                         self.id2token[cnt] = token
                         cnt += 1
-        if mode == "train" and config.build_new_vocab:
-            print('{} Words Vocab Built'.format(len(self.token2id)))
-            torch.save({
-                'id2token' : self.id2token,
-                'token2id' : self.token2id
-            }, os.path.join('experiments', config.exp_name, 'vocab.pkl'))
-        else:
-            try:
-                vocab = torch.load(os.path.join('experiments',
-                                                config.exp_name, 'vocab.pkl'))
-                self.id2token = vocab['id2token']
-                self.token2id = vocab['token2id']
-            except FileNotFoundError:
-                print("vocab file not found!")
-                print("use built vocab..")
+            print("id2token:", self.id2token)
+
+        print('Reading from {}'.format(formula_path))
+        tqdm_bar = tqdm(enumerate(open(formula_path, 'r')), desc="DataLoading")
+        for i, line in tqdm_bar:
+            if config.debug and i > 1000: break
+
+            imgFn, form = line.strip('\n').split('\t')
+            imgFn = "{}/{}".format(image_path, imgFn)
+            form = form.split()[:config.max_len]
+            self.dataset.append((imgFn, form))
+
+        if mode == "valid":
+            self.id2token = vocab['id2token']
+            self.token2id = vocab['token2id']
+        elif mode == "predict":
+            self.id2token = torch.load(config.checkpoint_filename)['vocab']
 
         # set vocab_size (call by reference)
         config.vocab_size = len(self.id2token)
