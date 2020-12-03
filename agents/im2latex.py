@@ -26,6 +26,7 @@ class Im2latex(BaseAgent):
     def __init__(self, cfg):
         super().__init__(cfg)
         self.device = get_device()
+        cfg.device = self.device
         self.cfg = cfg
 
         # dataset
@@ -39,10 +40,15 @@ class Im2latex(BaseAgent):
                             shuffle=cfg.data_shuffle, num_workers=cfg.num_w,
                             collate_fn=collate, drop_last=True)
         if cfg.valid_img_path != "":
-            valid_dataset = Im2LatexDataset(cfg, mode="valid")
-            self.valid_loader = DataLoader(valid_dataset, batch_size=cfg.bs,
-                                shuffle=cfg.data_shuffle, num_workers=cfg.num_w,
-                                collate_fn=collate, drop_last=True)
+            valid_dataset = Im2LatexDataset(cfg, mode="valid",
+                                            vocab={'id2token': self.id2token,
+                                                   'token2id': self.token2id})
+            self.valid_loader = DataLoader(valid_dataset,
+                                           batch_size=cfg.bs//cfg.beam_search_k,
+                                           shuffle=cfg.data_shuffle,
+                                           num_workers=cfg.num_w,
+                                           collate_fn=collate,
+                                           drop_last=True)
 
         # define models
         self.model = Im2LatexModel(cfg)  # fill the parameters
@@ -65,13 +71,16 @@ class Im2latex(BaseAgent):
         # define criterion
         self.criterion = cal_loss
 
-        # define optimizers for both generator and discriminator
         self.optimizer = torch.optim.Adam(  params=self.model.parameters(),
                                             lr=cfg.lr,
                                             betas=( cfg.adam_beta_1,
                                                     cfg.adam_beta_2))
-        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
-                                                    step_size=2, gamma=0.5)
+
+        milestones = cfg.milestones
+        self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer,
+                                                              milestones,
+                                                              gamma=cfg.gamma,
+                                                              verbose=True)
 
         # initialize counter
         self.current_epoch = 1
@@ -129,6 +138,7 @@ class Im2latex(BaseAgent):
             'epoch': self.current_epoch,
             'iteration': self.current_iteration,
             'model' : self.model.state_dict(),
+            'vocab' : self.id2token,
             'optimizer': self.optimizer.state_dict()
         }
 
@@ -165,13 +175,12 @@ class Im2latex(BaseAgent):
         prev_perplexity = 0
         for e in range(self.current_epoch, self.cfg.epochs+1):
             this_perplexity = self.train_one_epoch()
-            if prev_perplexity / this_perplexity < 1.2:
-                self.scheduler.step()
-            prev_perplexity = this_perplexity
-            if self.cfg.valid_img_path:
-                self.validate()
             self.save_checkpoint()
+            self.scheduler.step()
             self.current_epoch += 1
+
+        if self.cfg.valid_img_path:
+            self.validate()
 
     def train_one_epoch(self):
         """
@@ -182,7 +191,6 @@ class Im2latex(BaseAgent):
                         total=len(self.train_loader))
 
         self.model.train()
-        avg_loss = 0
         last_avg_perplexity, avg_perplexity = 0, 0
         for i, (imgs, tgt) in tqdm_bar:
             imgs = imgs.float().to(self.device)
@@ -191,15 +199,8 @@ class Im2latex(BaseAgent):
             # [B, MAXLEN, VOCABSIZE]
             logits = self.model(imgs, tgt, is_train=True)
 
-            perplexity = self.criterion(logits, tgt)
-            # L2 regularization
-            reg_loss = 0
-            for param in self.model.parameters():
-                reg_loss += torch.norm(param)
-            loss = perplexity + reg_loss * self.cfg.L2_lambda
-
-            avg_loss += loss.item()
-            avg_perplexity += perplexity.item()
+            loss = self.criterion(logits, tgt)
+            avg_perplexity += loss.item()
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip)
@@ -208,28 +209,28 @@ class Im2latex(BaseAgent):
 
             # logging
             if i % self.cfg.log_freq == 0:
-                avg_loss = avg_loss / self.cfg.log_freq
                 avg_perplexity = avg_perplexity / self.cfg.log_freq
-                self.summary_writer.add_scalar('loss/train', avg_loss,
-                                            global_step=self.current_iteration)
                 self.summary_writer.add_scalar('perplexity/train', avg_perplexity,
                                             global_step=self.current_iteration)
+                self.summary_writer.add_scalar('lr', self.scheduler.get_last_lr(),
+                                            global_step=self.current_iteration)
                 tqdm_bar.set_description(
-                    "e{} | reg_loss: {:.3f} | avg_perplexity: {:.3f}".format(
-                    self.current_epoch, reg_loss*self.cfg.L2_lambda, avg_perplexity))
-
-                # print('logits[0]:', logits[0].argmax(1))
-                # print('tgt[0]:', tgt[0])
+                    "e{} | avg_perplexity: {:.3f}".format(
+                    self.current_epoch, avg_perplexity))
 
                 # save if best
                 if  avg_perplexity < self.best_metric:
                     self.save_checkpoint(is_best=True)
+
                     self.best_metric = avg_perplexity
                 last_avg_perplexity = avg_perplexity
-                avg_loss, avg_perplexity = 0, 0
+                avg_perplexity = 0
 
-        print('logits[0]:', logits[0].argmax(1))
-        print('tgt[0]:', tgt[0])
+        mask = (tgt[0] != 2)
+        pred = str(logits[0].argmax(1)[mask].cpu().detach().tolist())
+        gt = str(tgt[0][mask].cpu().tolist())
+        self.summary_writer.add_text('example/train', pred+'  \n'+gt,
+                                     global_step=self.current_iteration)
 
         return last_avg_perplexity
 
@@ -241,22 +242,24 @@ class Im2latex(BaseAgent):
         tqdm_bar = tqdm(enumerate(self.valid_loader, 1),
                         total=len(self.valid_loader))
         self.model.eval()
-        total_perplexity = 0
+        acc = 0
         with torch.no_grad():
             for i, (imgs, tgt) in tqdm_bar:
                 imgs = imgs.to(self.device).float()
-
                 tgt = tgt.to(self.device).long()
 
-                logits = self.model(imgs) # [B, MAXLEN, VOCABSIZE]
-                perplexity = self.criterion(logits, tgt)
-                total_perplexity += perplexity.item()
-
+                logits = self.model(imgs, is_train=False).long() # [B, MAXLEN, VOCABSIZE]
+                # mask = (tgt == 2)
+                # tgt[mask] = 1
+                # logits[mask] = 1
+                acc += torch.all(tgt==logits, dim=1).sum() / imgs.size(0)
+                # print('t', tgt)
+                # print('l', logits)
+                tqdm_bar.set_description('acc {:.4f}'.format(acc/i))
                 if i % self.cfg.log_freq == 0:
-                    print('logits[0]:', logits[0].argmax(1))
-                    print('tgt[0]:', tgt[0])
-        self.logger.info('[VALIDATE] Perplexity :', total_perplexity/i)
-
+                    self.summary_writer.add_scalar('accuracy/valid',
+                                                   acc.item()/i,
+                                                   global_step=self.current_iteration)
 
     def predict(self):
         """
@@ -266,10 +269,13 @@ class Im2latex(BaseAgent):
         from torchvision import transforms
         from pathlib import Path
         from PIL import Image
+        from time import time
 
         self.model.eval()
         transform = transforms.ToTensor()
         image_path = Path(self.cfg.test_img_path)
+
+        t = time()
         with torch.no_grad():
             images = []
             imgPath = list(image_path.glob('*.jpg')) + list(image_path.glob('*.png'))
@@ -279,11 +285,13 @@ class Im2latex(BaseAgent):
                 img = transform(img)
                 images.append(img)
             images = torch.stack(images, dim=0)
-            logit = self.model(images)  # [B, max_len, vocab_size]
-            logit = logit.argmax(2)
+            out = self.model(images)  # [B, max_len, vocab_size]
+            out = out.argmax(2)
 
-        for i, output in enumerate(logit):
+        for i, output in enumerate(out):
             print(i, ' '.join([self.id2token[out.item()] for out in output if out.item() != 1]))
+
+        print(time()-t)
 
     def finalize(self):
         """
