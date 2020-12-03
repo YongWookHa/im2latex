@@ -1,11 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from copy import copy, deepcopy
 
 
 class Decoder(nn.Module):
     def __init__(self, cfg):
         super(Decoder, self).__init__()
+        self.cfg = cfg
         self.attention_cell = AttentionCell(cfg.vocab_size,
                                             cfg.dec_hidden_size,
                                             cfg.vocab_size)
@@ -21,7 +23,7 @@ class Decoder(nn.Module):
         one_hot = one_hot.scatter_(1, input_char, 1)
         return one_hot
 
-    def forward(self, batch_H, text, is_train=True, batch_max_length=40):
+    def forward(self, batch_H, text, is_train=True, batch_max_length=120):
         """
         input:
             batch_H : contextual_feature H = hidden state of encoder. [batch_size x num_steps x num_classes]
@@ -45,19 +47,79 @@ class Decoder(nn.Module):
                 output_hiddens[:, i, :] = hidden[0]  # LSTM hidden index (0: hidden, 1: cell)
             probs = self.generator(output_hiddens)
 
+            return F.softmax(probs, dim=2)  # batch_size x num_steps x num_classes
         else:
+            ''''''
+            k = self.cfg.beam_search_k
             targets = torch.LongTensor(batch_size).fill_(0).to(self.device)  # [START] token
-            probs = torch.FloatTensor(batch_size, num_steps, self.num_classes).fill_(0).to(self.device)
+            branches = [BeamSearchBranch(i) for i in range(batch_size * k)]
 
-            for i in range(num_steps):
+            ''' index 0 '''
+            char_onehots = self._char_to_onehot(targets, onehot_dim=self.num_classes)
+            hidden, alpha = self.attention_cell(hidden, batch_H, char_onehots)
+            probs_step = F.softmax(self.generator(hidden[0]), dim=-1)
+            values, indices = torch.topk(probs_step, k, dim=-1)
+            indices = torch.flatten(indices, 0, 1)
+            values = torch.flatten(values, 0, 1)
+
+            ''' update '''
+            hidden = [hidden[0], hidden[1]]
+            hidden[0] = torch.repeat_interleave(hidden[0], repeats=k, dim=0)
+            hidden[1] = torch.repeat_interleave(hidden[1], repeats=k, dim=0)
+            batch_H = torch.repeat_interleave(batch_H, repeats=k, dim=0)
+            targets = copy(indices)
+
+            for i, b in enumerate(branches):
+                b.insert(indices[i], values[i])
+                # b.updateHidden(hidden, i)
+
+            # 1 : [END]
+            for i in range(1, num_steps):
                 char_onehots = self._char_to_onehot(targets, onehot_dim=self.num_classes)
                 hidden, alpha = self.attention_cell(hidden, batch_H, char_onehots)
-                probs_step = self.generator(hidden[0])
-                probs[:, i, :] = probs_step
-                next_input = probs_step.argmax(1)
-                targets = next_input
+                probs_step = F.softmax(self.generator(hidden[0]), dim=-1)
 
-        return F.softmax(probs, dim=2)  # batch_size x num_steps x num_classes
+                h1, h2 = [], []
+                for j in range(0, batch_size*k, k):
+                    values, indices = torch.topk(probs_step[j:j+k,:], k, dim=-1)
+                    values = torch.flatten(values, 0, 1)
+                    indices = torch.flatten(indices, 0, 1)
+
+                    temp = []
+                    for t in range(k*k):
+                        # tup = (t, score)
+                        tup = (t, branches[j + t//k].getScore()*values[t])
+                        temp.append(tup)
+                    temp.sort(key=lambda tup: tup[1], reverse=True)  # ascending
+
+                    new_branches = []
+                    for t, tup in enumerate(temp[:k]):
+                        new_branches.append(branches[j + tup[0]//k].copy())
+                        if indices[tup[0]].item() != 1:  # <END> Token
+                            new_branches[t].insert(indices[tup[0]], values[tup[0]])
+                        # branches[j+t].updateHidden(hidden, j + tup[0]//k)
+                        targets[j+t] = indices[tup[0]]
+                        h1.append(hidden[0][j + tup[0]//k])
+                        h2.append(hidden[1][j + tup[0]//k])
+                    branches[j:j+k] = new_branches
+                hidden = [torch.stack(h1), torch.stack(h2)]
+
+            # return the bests
+            ret = []
+            for i in range(0, batch_size*k, k):
+                winner = sorted(branches[i:i+k], key=lambda b: b.getScore())[-1]
+                ret.append(winner)
+            return ret
+            # targets = torch.LongTensor(batch_size).fill_(0).to(self.device)  # [START] token
+            # probs = torch.FloatTensor(batch_size, num_steps, self.num_classes).fill_(0).to(self.device)
+
+            # for i in range(num_steps):
+                # char_onehots = self._char_to_onehot(targets, onehot_dim=self.num_classes)
+                # hidden, alpha = self.attention_cell(hidden, batch_H, char_onehots)
+                # probs_step = self.generator(hidden[0])
+                # probs[:, i, :] = probs_step
+                # next_input = probs_step.argmax(1)
+                # targets = next_input
 
 
 class AttentionCell(nn.Module):
@@ -83,3 +145,37 @@ class AttentionCell(nn.Module):
         '''Decoder RNN'''
         cur_hidden = self.rnn(concat_context, prev_hidden)
         return cur_hidden, alpha
+
+
+class BeamSearchBranch(object):
+    def __init__(self, batch_id):
+        self.id = batch_id
+        self.sentence = []
+        self.wait = None
+        self.score = 1.
+        self.hidden = None
+
+    def __len__(self):
+        return len(self.sentence)
+
+    def __repr__(self):
+        return  ' '.join(list(map(str, map(int, self.sentence)))) \
+                + ' | {:.3}'.format(float(self.score))
+
+    def insert(self, index, score):
+        self.sentence.append(deepcopy(index))
+        self.score *= score
+
+    def getScore(self, alpha=0.6, min_length=3):
+        p = (1+len(self.sentence))**alpha / (1+min_length)**alpha
+        return self.score * p
+
+    def updateHidden(self, hidden, idx):
+        self.hidden = [hidden[0][idx], hidden[1][idx]]
+
+    def copy(self):
+        return deepcopy(self)
+
+    def getSentence(self):
+        return self.sentence
+
