@@ -15,6 +15,7 @@ class Im2LatexModel(nn.Module):
         """
         out_size : VOCAB_SIZE
         """
+        self.device = cfg.device
         self.max_len = cfg.max_len
         super(Im2LatexModel, self).__init__()
 
@@ -35,7 +36,17 @@ class Im2LatexModel(nn.Module):
         """ encode """
         contextual_features = self.encoder(imgs)  # [B, W', D]
         """ decode """
-        prediction = self.decoder(contextual_features.contiguous(), formulas,
+        pred= self.decoder(contextual_features.contiguous(), formulas,
                         is_train, batch_max_length=self.max_len)
 
-        return prediction
+        if not is_train:
+            prediction = []
+            for b in pred:
+                x = torch.tensor(b.getSentence())
+                if self.max_len -x.size(0) >= 0:
+                    t = torch.cat([torch.ones(1), torch.ones(self.max_len-x.size(0))*2])
+                    x = torch.cat((x,t))
+                prediction.append(x)
+            pred = torch.stack(prediction).to(self.device)
+
+        return pred
