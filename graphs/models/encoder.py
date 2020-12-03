@@ -30,29 +30,28 @@ class CNN(nn.Module):
 
         self.cnn = nn.Sequential(
             nn.Conv2d(1, 64, 3, 1, 1),
-            nn.ReLU(),
+            nn.ReLU(True),
             nn.MaxPool2d(2, 2, 1),
 
             nn.Conv2d(64, 128, 3, 1, 1),
-            nn.ReLU(),
+            nn.ReLU(True),
             nn.MaxPool2d(2, 2, 1),
 
             nn.Conv2d(128, 256, 3, 1, 1),
             nn.BatchNorm2d(256),
-            nn.ReLU(),
+            nn.ReLU(True),
 
             nn.Conv2d(256, 256, 3, 1, 1),
-            nn.ReLU(),
+            nn.ReLU(True),
             nn.MaxPool2d((1, 2), (1, 2), 0),
 
             nn.Conv2d(256, 512, 3, 1, 1),
             nn.BatchNorm2d(512),
-            nn.ReLU(),
+            nn.ReLU(True),
 
             nn.MaxPool2d((2, 1), (2, 1), 0),
             nn.Conv2d(512, 512, 3, 1, 1),
-            nn.BatchNorm2d(512),
-            nn.ReLU()
+            nn.ReLU(True)
         )
 
     def forward(self, images):
