@@ -286,7 +286,7 @@ class Im2latex(BaseAgent):
                 images.append(img)
             images = torch.stack(images, dim=0)
             out = self.model(images)  # [B, max_len, vocab_size]
-            out = out.argmax(2)
+            # out = out.argmax(2)
 
         for i, output in enumerate(out):
             print(i, ' '.join([self.id2token[out.item()] for out in output if out.item() != 1]))
